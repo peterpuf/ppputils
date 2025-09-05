@@ -6,78 +6,55 @@ import time
 from typing import Optional, List, Dict, Any
 
 
-def get_pub_ip_concurrent(timeout: float = 0.5) -> Optional[str]:
-    """并发请求多个服务，返回最快响应的IP"""
+def get_pub_ip(timeout: float = 1.0) -> Optional[str]:
+    import requests, concurrent.futures, re, json
+
     services = [
-        # 纯文本IP服务
-        "https://api.ipify.org",
-        "https://ipinfo.io/ip",
-        "https://icanhazip.com",
-        "https://ifconfig.me/ip",
-        "https://checkip.amazonaws.com",
-        "https://ip.42.pl/raw",
-        "https://httpbin.org/ip",
-        "https://api.my-ip.io/ip",
-        "https://ipapi.co/ip",
-        "https://api4.my-ip.io/ip",
-        "https://ip4.seeip.org",
-        "https://ipv4.icanhazip.com",
-        "https://v4.ident.me",
-        "https://api.ipgeolocation.io/getip",
-        "https://wtfismyip.com/text",
-        # 新增的服务
-        "https://ipecho.net/plain",
-        "https://myexternalip.com/raw",
-        "https://bot.whatismyipaddress.com",
-        "https://ip4only.me/api/",
+        # 国内优先
+        "http://pv.sohu.com/cityjson?ie=utf-8",   # sohu
+        "http://ip.360.cn/IPShare/info",          # 360
+        "http://ip.cn/api/index?ip=&type=0",      # ip.cn
+        "https://api.ip.sb/ip",                   # ip.sb (国内CDN)
+
+        # 国外 Anycast
+        "https://1.1.1.1/cdn-cgi/trace",          # Cloudflare
+        "https://checkip.amazonaws.com",          # AWS
+        "https://whatismyip.akamai.com/",         # Akamai
+        "https://api.ipify.org",                  # ipify
     ]
 
     def fetch_ip(url: str) -> Optional[str]:
         try:
-            response = requests.get(
-                url,
-                timeout=timeout,
-                headers={
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                }
-            )
-            ip = response.text.strip()
+            resp = requests.get(url, timeout=timeout)
+            text = resp.text.strip()
 
-            # 处理JSON响应的服务
-            if url == "https://httpbin.org/ip":
-                return json.loads(ip).get('origin', '').split(',')[0].strip()
-            elif url == "https://ip4.seeip.org":
-                return json.loads(ip).get('ip', '').strip() if ip.startswith('{') else ip
+            # 特殊解析
+            if "cip" in text and "cname" in text:  # sohu
+                m = re.search(r'"cip":\s*"([0-9.]+)"', text)
+                return m.group(1) if m else None
+            elif text.startswith("{") and "360" in url:  # 360
+                return resp.json().get("ip")
+            elif "ip.cn" in url and text.startswith("{"):  # ip.cn
+                return resp.json().get("ip")
+            elif "ip=" in text:  # Cloudflare trace
+                for line in text.splitlines():
+                    if line.startswith("ip="):
+                        return line.split("=", 1)[1].strip()
+            return text if _is_valid_ip(text) else None
+        except:
+            return None
 
-            # 验证IP格式
-            if _is_valid_ip(ip):
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(services)) as executor:
+        futures = [executor.submit(fetch_ip, url) for url in services]
+        for future in concurrent.futures.as_completed(futures, timeout=timeout + 0.5):
+            ip = future.result()
+            if ip:
                 return ip
-            return None
-
-        except Exception:
-            return None
-
-    # 使用线程池并发请求
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        # 提交所有任务
-        future_to_url = {executor.submit(fetch_ip, url): url for url in services}
-
-        try:
-            # 获取第一个成功的结果
-            for future in concurrent.futures.as_completed(future_to_url, timeout=timeout + 1):
-                result = future.result()
-                if result:
-                    # 取消其他未完成的任务
-                    for f in future_to_url:
-                        f.cancel()
-                    return result
-        except concurrent.futures.TimeoutError:
-            pass
-
     return None
 
 
-def get_pub_ip_json_services(timeout: float = 0.5) -> Optional[Dict[str, Any]]:
+
+def get_pub_ip_detail(timeout: float = 0.5) -> Optional[Dict[str, Any]]:
     """使用返回JSON数据的服务，获取更详细信息"""
     json_services = [
         "https://ipapi.co/json",
@@ -121,7 +98,7 @@ def get_pub_ip_json_services(timeout: float = 0.5) -> Optional[Dict[str, Any]]:
     return None
 
 
-def get_pub_ip_dns_method() -> Optional[str]:
+def get_ip_by_dns() -> Optional[str]:
     """通过DNS查询获取公网IP"""
     try:
         # 方法1: 查询OpenDNS
@@ -211,14 +188,14 @@ def _is_private_ip(ip: str) -> bool:
         return False
 
 
-def get_public_ip_comprehensive(timeout: float = 0.5) -> Dict[str, Any]:
+def get_public_ip_compare(timeout: float = 0.5) -> Dict[str, Any]:
     """综合多种方法获取公网IP"""
     methods = {
-        'http_concurrent': lambda: get_pub_ip_concurrent(timeout),
-        'json_services': lambda: get_pub_ip_json_services(timeout),
-        'dns_method': get_pub_ip_dns_method,
-        'stun_method': get_pub_ip_stun_method,
-        'upnp_method': get_pub_ip_upnp_method,
+        'get_pub_ip': lambda: get_pub_ip(timeout),
+        'get_pub_ip_detail': lambda: get_pub_ip_detail(timeout),
+        'get_ip_by_dns': get_ip_by_dns,
+        'get_pub_ip_stun_method': get_pub_ip_stun_method,
+        'get_pub_ip_upnp_method': get_pub_ip_upnp_method,
     }
 
     results = {}
@@ -251,23 +228,3 @@ def get_public_ip_comprehensive(timeout: float = 0.5) -> Dict[str, Any]:
             results[method_name] = {'error': str(e)}
 
     return results
-
-
-if __name__ == '__main__':
-    print("=== 快速获取公网IP ===")
-    ip = get_pub_ip_concurrent(timeout=0.5)
-    print(f"公网IP: {ip}")
-
-    print("\n=== 详细信息 ===")
-    json_result = get_pub_ip_json_services(timeout=0.5)
-    if json_result:
-        print(f"详细信息: {json_result}")
-
-    print("\n=== 综合方法对比 ===")
-    all_results = get_public_ip_comprehensive(timeout=0.5)
-    for method, result in all_results.items():
-        print(f"{method}: {result}")
-
-    print("\n=== DNS方法 ===")
-    dns_ip = get_pub_ip_dns_method()
-    print(f"DNS查询IP: {dns_ip}")
