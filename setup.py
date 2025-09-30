@@ -1,20 +1,17 @@
-from setuptools import setup, find_packages
-
-setup(
-    name='ppputils',
-    version='0.1',
-    packages=find_packages(),
-    description='init code',
-    # python3，readme文件中文报错
-    long_description_content_type='text/markdown',
-    url='https://github.com/puffhub/ppputils',
-    author='Peter Puff',
-    author_email='',
-    license='MIT',
-    install_requires=[
-        # 依赖列表
-    ],
+import setuptools
+setuptools.setup(
+    name="ppputils",
+    version="0.0.2",
+    author="puff",
+    author_email="angrypuff333@gmail.com",
+    description="ppp的utils",
+    install_requires=['requests'],
+    long_description=open("README.md", 'r').read(),
+    long_description_content_type="text/markdown",
+    packages=setuptools.find_packages(),
     classifiers=[
-        # 分类信息
-    ]
+        "Programming Language :: Python :: 2",
+        "License :: OSI Approved :: MIT License",
+        "Operating System :: OS Independent",
+    ],
 )
